@@ -1,11 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import {
-  createClient,
-  createAccount,
-  createTablesDB,
+  account,
+  tablesDB,
+  impersonatedClient,
   listUsers,
-  ENDPOINT,
-  PROJECT_ID,
   DATABASE_ID,
   TABLE_ID,
 } from "./lib/appwrite";
@@ -56,22 +54,14 @@ export default function App() {
   const isImpersonating = impersonatedUser !== null;
   const activeUserId = isImpersonating ? impersonatedUser.$id : currentUser?.$id;
 
-  const getActiveClient = useCallback(() => {
-    const client = createClient();
-    if (impersonatedUser) {
-      client.setImpersonateUserId(impersonatedUser.$id);
-    }
-    return client;
-  }, [impersonatedUser]);
+  const getDB = useCallback(() => {
+    return isImpersonating ? impersonatedClient(impersonatedUser.$id).tablesDB : tablesDB;
+  }, [isImpersonating, impersonatedUser]);
 
   const fetchNotes = useCallback(
     async (userId: string, impersonateId?: string) => {
-      const client = createClient();
-      if (impersonateId) {
-        client.setImpersonateUserId(impersonateId);
-      }
-      const tablesDB = createTablesDB(client);
-      const res = await tablesDB.listRows({
+      const db = impersonateId ? impersonatedClient(impersonateId).tablesDB : tablesDB;
+      const res = await db.listRows({
         databaseId: DATABASE_ID,
         tableId: TABLE_ID,
         queries: [Query.equal("userId", userId), Query.orderDesc("$createdAt")],
@@ -81,19 +71,15 @@ export default function App() {
     []
   );
 
-  // Auto-detect session on mount
   useEffect(() => {
     const checkSession = async () => {
       try {
-        const client = createClient();
-        const account = createAccount(client);
         const user = await account.get();
         setCurrentUser(user);
-
         await fetchNotes(user.$id);
 
         if (user.impersonator) {
-          const allUsers = await listUsers(ENDPOINT, PROJECT_ID);
+          const allUsers = await listUsers();
           setUsers(allUsers.filter((u) => u.$id !== user.$id));
         }
       } catch {
@@ -109,16 +95,13 @@ export default function App() {
     setError(null);
     setLoading(true);
     try {
-      const client = createClient();
-      const account = createAccount(client);
       await account.createEmailPasswordSession({ email, password });
       const user = await account.get();
       setCurrentUser(user);
-
       await fetchNotes(user.$id);
 
       if (user.impersonator) {
-        const allUsers = await listUsers(ENDPOINT, PROJECT_ID);
+        const allUsers = await listUsers();
         setUsers(allUsers.filter((u) => u.$id !== user.$id));
       }
     } catch (e: unknown) {
@@ -132,12 +115,10 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const impClient = createClient().setImpersonateUserId(userId);
-      const impAccount = createAccount(impClient);
-      const impUser = await impAccount.get();
+      const imp = impersonatedClient(userId);
+      const impUser = await imp.account.get();
       setImpersonatedUser(impUser);
       setTab("notes");
-
       await fetchNotes(userId, userId);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Impersonation failed");
@@ -159,10 +140,8 @@ export default function App() {
     if (!activeUserId || !newTitle.trim()) return;
     setLoading(true);
     try {
-      const client = getActiveClient();
-      const tablesDB = createTablesDB(client);
       const color = NOTE_COLORS[Math.floor(Math.random() * NOTE_COLORS.length)];
-      await tablesDB.createRow({
+      await getDB().createRow({
         databaseId: DATABASE_ID,
         tableId: TABLE_ID,
         rowId: ID.unique(),
@@ -187,9 +166,7 @@ export default function App() {
     if (!editingNote || !activeUserId) return;
     setLoading(true);
     try {
-      const client = getActiveClient();
-      const tablesDB = createTablesDB(client);
-      await tablesDB.updateRow({
+      await getDB().updateRow({
         databaseId: DATABASE_ID,
         tableId: TABLE_ID,
         rowId: editingNote.$id,
@@ -215,7 +192,6 @@ export default function App() {
 
   const logout = async () => {
     try {
-      const account = createAccount(createClient());
       await account.deleteSession({ sessionId: "current" });
     } catch { /* ignore */ }
     setCurrentUser(null);
@@ -224,7 +200,6 @@ export default function App() {
     setNotes([]);
   };
 
-  // Loading state
   if (loading && !currentUser) {
     return (
       <div className="login-screen">
@@ -238,7 +213,6 @@ export default function App() {
     );
   }
 
-  // Login screen
   if (!currentUser) {
     return (
       <div className="login-screen">
@@ -281,7 +255,6 @@ export default function App() {
     );
   }
 
-  // Dashboard
   return (
     <div className="app">
       {isImpersonating && (

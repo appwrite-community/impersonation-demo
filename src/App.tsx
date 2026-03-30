@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import {
+  client,
   account,
   tablesDB,
-  impersonatedClient,
   listUsers,
   DATABASE_ID,
   TABLE_ID,
@@ -54,22 +54,14 @@ export default function App() {
   const isImpersonating = impersonatedUser !== null;
   const activeUserId = isImpersonating ? impersonatedUser.$id : currentUser?.$id;
 
-  const getDB = useCallback(() => {
-    return isImpersonating ? impersonatedClient(impersonatedUser.$id).tablesDB : tablesDB;
-  }, [isImpersonating, impersonatedUser]);
-
-  const fetchNotes = useCallback(
-    async (userId: string, impersonateId?: string) => {
-      const db = impersonateId ? impersonatedClient(impersonateId).tablesDB : tablesDB;
-      const res = await db.listRows({
-        databaseId: DATABASE_ID,
-        tableId: TABLE_ID,
-        queries: [Query.equal("userId", userId), Query.orderDesc("$createdAt")],
-      });
-      setNotes(res.rows as Note[]);
-    },
-    []
-  );
+  const fetchNotes = useCallback(async (userId: string) => {
+    const res = await tablesDB.listRows({
+      databaseId: DATABASE_ID,
+      tableId: TABLE_ID,
+      queries: [Query.equal("userId", userId), Query.orderDesc("$createdAt")],
+    });
+    setNotes(res.rows as Note[]);
+  }, []);
 
   useEffect(() => {
     const checkSession = async () => {
@@ -115,19 +107,21 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const imp = impersonatedClient(userId);
-      const impUser = await imp.account.get();
+      client.setImpersonateUserId(userId);
+      const impUser = await account.get();
       setImpersonatedUser(impUser);
       setTab("notes");
-      await fetchNotes(userId, userId);
+      await fetchNotes(userId);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Impersonation failed");
+      client.setImpersonateUserId("");
     } finally {
       setLoading(false);
     }
   };
 
   const stopImpersonating = async () => {
+    client.setImpersonateUserId("");
     setImpersonatedUser(null);
     setEditingNote(null);
     setTab("notes");
@@ -141,7 +135,7 @@ export default function App() {
     setLoading(true);
     try {
       const color = NOTE_COLORS[Math.floor(Math.random() * NOTE_COLORS.length)];
-      await getDB().createRow({
+      await tablesDB.createRow({
         databaseId: DATABASE_ID,
         tableId: TABLE_ID,
         rowId: ID.unique(),
@@ -154,7 +148,7 @@ export default function App() {
       });
       setNewTitle("");
       setNewContent("");
-      await fetchNotes(activeUserId, impersonatedUser?.$id);
+      await fetchNotes(activeUserId);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to create note");
     } finally {
@@ -166,7 +160,7 @@ export default function App() {
     if (!editingNote || !activeUserId) return;
     setLoading(true);
     try {
-      await getDB().updateRow({
+      await tablesDB.updateRow({
         databaseId: DATABASE_ID,
         tableId: TABLE_ID,
         rowId: editingNote.$id,
@@ -176,7 +170,7 @@ export default function App() {
         },
       });
       setEditingNote(null);
-      await fetchNotes(activeUserId, impersonatedUser?.$id);
+      await fetchNotes(activeUserId);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to update note");
     } finally {
@@ -194,6 +188,7 @@ export default function App() {
     try {
       await account.deleteSession({ sessionId: "current" });
     } catch { /* ignore */ }
+    client.setImpersonateUserId("");
     setCurrentUser(null);
     setUsers([]);
     setImpersonatedUser(null);

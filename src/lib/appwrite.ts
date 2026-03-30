@@ -10,11 +10,6 @@ export const client = new Client().setEndpoint(ENDPOINT).setProject(PROJECT_ID);
 export const account = new Account(client);
 export const tablesDB = new TablesDB(client);
 
-export function impersonatedClient(userId: string) {
-  const c = new Client().setEndpoint(ENDPOINT).setProject(PROJECT_ID).setImpersonateUserId(userId);
-  return { account: new Account(c), tablesDB: new TablesDB(c) };
-}
-
 export async function listUsers(): Promise<AppwriteUser[]> {
   const res = await fetch(`${ENDPOINT}/users`, {
     headers: {
